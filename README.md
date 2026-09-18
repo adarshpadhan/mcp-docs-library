@@ -1,8 +1,44 @@
-# MCP College Library
+# MCP Docs Library
 
-An open-source college learning library with a TypeScript API, MCP server,
-Cloudflare R2 originals, Oracle-hosted indexing, and a local MacBook ingestion
-worker around UnlimitedOCR.
+<p align="center">
+  <strong>Open course materials directly from ChatGPT, Claude, Gemini, and other MCP clients.</strong><br />
+  Search PYQs, notes, books, OCR text, and downloadable originals through one open-source library.
+</p>
+
+<p align="center">
+  <a href="https://github.com/adarshpadhan/mcp-docs-library"><img src="https://img.shields.io/github/stars/adarshpadhan/mcp-docs-library?style=flat&logo=github" alt="GitHub stars" /></a>
+  <a href="https://library.runloop.in/health"><img src="https://img.shields.io/website?url=https%3A%2F%2Flibrary.runloop.in%2Fhealth&label=service" alt="Service status" /></a>
+  <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-6f42c1" alt="MCP Streamable HTTP" />
+</p>
+
+## Overview
+
+MCP Docs Library is an open-source college learning platform with a TypeScript API, MCP server, PostgreSQL/pgvector search, Cloudflare delivery, and a local OCR ingestion worker. It is designed for licensed or permissioned course content and student access through compatible AI clients.
+
+```mermaid
+flowchart LR
+  A[Student portal] -->|authenticated upload| B[Backend API]
+  B --> C[(PostgreSQL + pgvector)]
+  B --> D[OCR ingestion worker]
+  D --> E[Published manifests and chunks]
+  F[ChatGPT / Claude / Gemini] -->|MCP| B
+  B -->|search, OCR, signed ZIP| F
+```
+
+> **Status:** The public MCP endpoint is available for read/search testing. Authentication and student-domain authorization are not enabled yet; do not publish restricted material until those controls are deployed.
+
+## Public MCP endpoint
+
+```text
+https://library.runloop.in/mcp
+```
+
+Health check: <https://library.runloop.in/health>
+
+Available tools include `search_library`, `semantic_search`, `get_document_text`, `retrieve_context`, and `create_document_download_link`. Download links accept either one `documentId` or 1–20 `documentIds` and return a short-lived HTTPS ZIP URL.
+
+## Architecture
+
 
 ## Deployment directories
 
