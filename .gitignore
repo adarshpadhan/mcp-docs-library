@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*.local
+!.env.example
+.DS_Store
+coverage/
+*.log
+*.tsbuildinfo
+backend/certs/
+# Large/vendor artifacts; install or fetch these separately.
+local-ingest/vendor/Unlimited-OCR/Unlimited-OCR.pdf
+local-ingest/vendor/Unlimited-OCR/wheel/
+local-ingest/vendor/unlimited-ocr-mac/model_dir_patched/
+local-ingest/vendor/unlimited-ocr-mac/.venv-ocr/
+local-ingest/data/
+local-ingest/vendor/unlimited-ocr-mac/.venv-ocr/
+local-ingest/vendor/unlimited-ocr-mac/model_dir/
+local-ingest/vendor/unlimited-ocr-mac/model_dir_patched/

@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+node_modules
+**/node_modules
+dist
+**/dist
+local-ingest/vendor
+local-ingest/data
+backend/certs
+*.log
+*.raw

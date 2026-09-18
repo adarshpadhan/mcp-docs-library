@@ -1,0 +1,5 @@
+{
+  "name": "@college-library/local-ingest",
+  "private": true,
+  "type": "module"
+}
