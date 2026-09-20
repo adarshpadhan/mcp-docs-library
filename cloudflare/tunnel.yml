@@ -1,14 +1,13 @@
 # Named Cloudflare Tunnel configuration for the college library backend.
-# Create the tunnel first:
-#   cloudflared tunnel login
-#   cloudflared tunnel create college-library
-# Then replace <TUNNEL_ID> below and create the DNS route:
-#   cloudflared tunnel route dns college-library library.runloop.in
+# Install this as /etc/cloudflared/config.yml on the Oracle server.
+# The credentials file is created by `cloudflared tunnel create`.
 
 tunnel: 02ae3dbd-0a60-41aa-85f4-9bea1c65cdba
-credentials-file: /home/ubuntu/.cloudflared/02ae3dbd-0a60-41aa-85f4-9bea1c65cdba.json
+credentials-file: /etc/cloudflared/02ae3dbd-0a60-41aa-85f4-9bea1c65cdba.json
 
 ingress:
   - hostname: library.runloop.in
     service: http://127.0.0.1:8787
+    originRequest:
+      httpHostHeader: library.runloop.in
   - service: http_status:404

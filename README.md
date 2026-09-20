@@ -39,7 +39,6 @@ Available tools include `search_library`, `semantic_search`, `get_document_text`
 
 ## Architecture
 
-
 ## Deployment directories
 
 - [`cloudflare/`](./cloudflare/) — student portal, Workers/Pages, and R2.
@@ -79,9 +78,14 @@ the project is split into separate repositories.
 - Streamable HTTP MCP endpoint at `POST /mcp`; supports session-based transport
   and fresh stateless POST requests from clients that do not preserve
   `Mcp-Session-Id`.
-- Authentication is not currently enabled; OAuth discovery endpoints are intentionally absent until a complete OAuth broker is deployed
+- MCP `server/discover` support advertises the protocol versions implemented by
+  the installed SDK, tools/resources capabilities, and usage guidance before
+  normal stateless requests.
+- Production `/mcp` access supports self-hosted Google OAuth or the configured
+  admin bearer token as a secondary direct-auth option. Keep that token private;
+  local development keeps OAuth optional when its credentials are absent.
 - Direct PDF downloads at `GET /api/v1/documents/:documentId/file`; administrators may use the bearer token, while MCP clients should call `create_document_download_link` with either one `documentId` or 1–20 `documentIds` to receive a 10-minute signed HTTPS ZIP URL
-- Planned stable public hostname: `https://library.runloop.in` through a named Cloudflare Tunnel.
+- Stable public hostname: `https://library.runloop.in` through the named Cloudflare Tunnel configuration in [`cloudflare/`](./cloudflare/).
 - Runnable stdio MCP entrypoint via `npm run mcp:stdio`.
 - Versioned upload-job and OCR-manifest contracts.
 - Local-ingest CLI that validates a page-preserving manifest shape and computes
@@ -286,9 +290,9 @@ Quick tunnels are unauthenticated and expose the current test catalog to
 anyone who has the URL. Use them only for short development tests; the URL
 changes when the tunnel is stopped.
 
-Authentication is intentionally not enabled in this local backend smoke-test
-stage. Google OIDC, manifest persistence in PostgreSQL, and production
-authorization are still pending.
+Authentication is intentionally optional in this local backend smoke-test
+stage. Google OIDC is enabled for the production college domain; manifest
+persistence in PostgreSQL is still pending.
 
 Run the local ingestion contract check with:
 

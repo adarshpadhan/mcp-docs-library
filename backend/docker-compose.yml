@@ -18,7 +18,7 @@ services:
       HTTPS_CERT_FILE: ""
       HTTPS_KEY_FILE: ""
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     depends_on:
       postgres:
         condition: service_healthy
