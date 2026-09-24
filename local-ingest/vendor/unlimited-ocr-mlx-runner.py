@@ -128,6 +128,7 @@ def main() -> None:
     inference_source = inference_source.replace('mx.array([seq_mask], dtype=bool)', 'mx.array(seq_mask.tolist(), dtype=mx.bool_)')
     inference_source = inference_source.replace('mx.array([seq_mask], dtype=mx.bool_)', 'mx.array([seq_mask.tolist()], dtype=mx.bool_)')
     inference_source = inference_source.replace('mx.array(seq_mask.tolist(), dtype=mx.bool_)', 'mx.array([seq_mask.tolist()], dtype=mx.bool_)')
+    inference_source = inference_source.replace('n_image_tokens = 272  # 256 + 16 newlines + separator', 'n_image_tokens = 273  # projector output includes the image separator token')
     inference_source = inference_source.replace('np.zeros(len(input_ids) + total_image_feats, dtype=mx.bool_)', 'np.zeros(len(input_ids) + total_image_feats, dtype=bool)')
     inference_source = inference_source.replace(
         "inputs_embeds = inputs_embeds.at[idx].set(\n                        mx.where(mask, img_feats, inputs_embeds[idx])\n                    )",
