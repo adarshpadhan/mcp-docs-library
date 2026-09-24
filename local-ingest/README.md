@@ -11,21 +11,26 @@ This directory contains the admin MacBook Air ingestion workflow.
 The TypeScript CLI in `src/` is the deployment boundary for the MacBook worker
 and its UnlimitedOCR adapter.
 
-## Unlimited-OCR installation
+## Unlimited-OCR MLX installation
 
-The open-source repository is installed at
-[`vendor/Unlimited-OCR/`](./vendor/Unlimited-OCR/), with the pinned source
-commit recorded in [`vendor/Unlimited-OCR.VERSION`](./vendor/Unlimited-OCR.VERSION).
-Python dependencies are listed in
-[`requirements-unlimited-ocr.txt`](./requirements-unlimited-ocr.txt).
+This project uses the Apple Silicon MLX port at
+[LoJexLLM/Unlimited-OCR-MLX](https://huggingface.co/LoJexLLM/Unlimited-OCR-MLX).
+The source and runtime provenance are recorded in
+[`vendor/Unlimited-OCR.VERSION`](./vendor/Unlimited-OCR.VERSION), and Python
+dependencies are listed in [`requirements-unlimited-ocr.txt`](./requirements-unlimited-ocr.txt).
 
-The Mac adapter is pinned separately from Baidu's upstream model/source commit;
-both commits are recorded in `Unlimited-OCR.VERSION` and emitted metadata uses
-the Mac adapter commit as `ocrVersion`.
+Create a dedicated Python environment and download the model outside Git:
 
-The original upstream implementation documents an NVIDIA CUDA/SGLang runtime.
-The vendored Mac adaptation provides an Apple-silicon MPS path and is the
-runtime used by this project.
+```sh
+python3 -m venv local-ingest/.venv-ocr-mlx
+local-ingest/.venv-ocr-mlx/bin/pip install -r local-ingest/requirements-unlimited-ocr.txt
+huggingface-cli download LoJexLLM/Unlimited-OCR-MLX --local-dir local-ingest/models/Unlimited-OCR-MLX
+```
+
+The adapter runs MLX directly on macOS so Apple GPU acceleration is available.
+Set `UNLIMITED_OCR_PYTHON` and `UNLIMITED_OCR_MODEL_DIR` when using non-default
+locations. Apple Containers remain CPU-safe but are not the recommended MLX
+execution path because they do not expose the host GPU.
 
 When the required runtime is available, process a permitted PDF with:
 
@@ -34,7 +39,7 @@ npm run dev:ingest:unlimited -- /path/to/pyq.pdf unlimited-ocr \
   title="Data Structures PYQ" courseCode=CSE-201 subject="Data Structures"
 ```
 
-The Mac adapter converts PDF pages to images, invokes its Python runner directly,
+The MLX adapter converts PDF pages to images, invokes the model runner directly,
 preserves the source checksum, and writes a page-preserving ingestion package under
 `local-ingest/data/processed/<documentId>/` containing `manifest.json` and one
 Markdown file per page. It does not overwrite the original file.
@@ -51,12 +56,13 @@ ADMIN_INGEST_TOKEN="$ADMIN_INGEST_TOKEN" npm run publish:ingest -- \
 
 The backend validates the manifest, atomically stores `manifest.json` and page
 Markdown under `LIBRARY_DATA_DIR`, then runs `syncFiles` so PostgreSQL full-text
-and pgvector indexes are refreshed. Set `OCR_FORCE_CPU=1` when running in an
-Apple container; the adapter otherwise selects MPS when available and always
-falls back to CPU.
+and pgvector indexes are refreshed. OCR should run directly on macOS with MLX;
+only the reviewed package publication needs to run in a container.
 
-`Containerfile` and `container-publish.sh` provide a CPU-safe Apple Container
-workflow that runs the existing local-ingest CLI and publishes its newest output.
+`container-publish.sh` intentionally refuses to run OCR in an Apple Container:
+MLX requires direct access to the host Apple GPU. Run OCR on macOS, review the
+package, then use `publish:ingest` (which may be run in a container) to send it
+to the backend.
 
 Metadata fields currently include title, document type, course code, subject,
 semester, exam year, language, contributor, raw/processed license, attribution,

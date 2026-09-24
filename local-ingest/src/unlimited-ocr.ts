@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url';
 
 import { ingestionManifestSchema, type IngestionManifest } from '@college-library/contracts';
 
-const repositoryRoot = resolve(fileURLToPath(new URL('../vendor/unlimited-ocr-mac', import.meta.url)));
-const runScript = join(repositoryRoot, 'run_mac.py');
-const pythonBin = join(repositoryRoot, '.venv-ocr', 'bin', 'python');
-const macAdapterCommit = 'fde21a9b84c1a80cff94cb8054d0172fdb679f57';
+const localIngestRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const modelDir = resolve(process.env.UNLIMITED_OCR_MODEL_DIR ?? join(localIngestRoot, 'models', 'Unlimited-OCR-MLX'));
+const pythonBin = process.env.UNLIMITED_OCR_PYTHON ?? 'python3';
+const runScript = join(localIngestRoot, 'vendor', 'unlimited-ocr-mlx-runner.py');
+const mlxModelRevision = 'LoJexLLM/Unlimited-OCR-MLX';
 
 async function pdfToImages(inputPath: string, imageDir: string): Promise<void> {
   await mkdir(imageDir, { recursive: true });
@@ -24,7 +25,7 @@ async function pdfToImages(inputPath: string, imageDir: string): Promise<void> {
           'doc = pymupdf.open(sys.argv[1])',
           'out = sys.argv[2]',
           'for i, page in enumerate(doc):',
-          '    page.get_pixmap(matrix=pymupdf.Matrix(2, 2)).save(os.path.join(out, f"page_{i + 1:04d}.png"))',
+          '    page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).save(os.path.join(out, f"page_{i + 1:04d}.png"))',
           'doc.close()',
         ].join('\n'),
         inputPath,
@@ -43,14 +44,7 @@ function runInference(imageDir: string, outputDir: string): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const childProcess = spawn(
       pythonBin,
-      [
-        runScript,
-        '--image_dir',
-        imageDir,
-        '--output_dir',
-        outputDir,
-        ...(process.env.OCR_FORCE_CPU === '1' ? ['--cpu'] : []),
-      ],
+      [runScript, '--model-dir', modelDir, '--image-dir', imageDir, '--output-dir', outputDir],
       { stdio: 'inherit' },
     );
 
@@ -118,8 +112,8 @@ export async function processPdfWithUnlimitedOcr(
     return ingestionManifestSchema.parse({
       documentId,
       sourceSha256,
-      ocrEngine: 'UnlimitedOCR',
-      ocrVersion: macAdapterCommit,
+      ocrEngine: 'UnlimitedOCR-MLX',
+      ocrVersion: mlxModelRevision,
       parserVersion: '0.1.0',
       language: process.env.OCR_LANGUAGE ?? 'en',
       processedAt: new Date().toISOString(),

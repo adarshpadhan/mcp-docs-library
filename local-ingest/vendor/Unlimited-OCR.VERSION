@@ -1,8 +1,6 @@
-Repository: https://github.com/baidu/Unlimited-OCR
-Branch: main
-Commit: d49ff64afffc1f47ab563dc1c589bc2f78808fa4
-Installed: 2026-09-17
+Model: https://huggingface.co/LoJexLLM/Unlimited-OCR-MLX
+Revision: main
+Runtime: Apple MLX FP16
+Installed: fetch with `huggingface-cli download` or `git lfs clone`
 
-Mac adapter repository: https://github.com/Konsn666/unlimited-ocr-mac
-Mac adapter branch: main
-Mac adapter commit: fde21a9b84c1a80cff94cb8054d0172fdb679f57
+The model directory is configured with `UNLIMITED_OCR_MODEL_DIR` and is not committed.

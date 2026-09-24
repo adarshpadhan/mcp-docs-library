@@ -17,4 +17,6 @@ local-ingest/vendor/unlimited-ocr-mac/.venv-ocr/
 local-ingest/data/
 local-ingest/vendor/unlimited-ocr-mac/.venv-ocr/
 local-ingest/vendor/unlimited-ocr-mac/model_dir/
+local-ingest/.venv-ocr-mlx/
+local-ingest/models/
 local-ingest/vendor/unlimited-ocr-mac/model_dir_patched/

@@ -1,9 +1,13 @@
 #!/bin/sh
 set -eu
-: "${ADMIN_INGEST_TOKEN:?Set ADMIN_INGEST_TOKEN}"
-INPUT_PDF=${1:?Usage: $0 /path/to/input.pdf [backend-url]}
-BACKEND_URL=${2:-http://host.docker.internal:8787}
-npm run dev:ingest:unlimited -- "$INPUT_PDF" unlimited-ocr
-# The CLI writes its package under local-ingest/data; publish the newest package.
-LATEST=$(find local-ingest/data/processed -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
-npm run publish:ingest -- "$LATEST" "$BACKEND_URL"
+
+cat >&2 <<'EOF'
+Unlimited-OCR-MLX must run directly on the Apple Silicon host so MLX can use
+Apple GPU acceleration. Apple Containers do not expose that device. Use:
+
+  UNLIMITED_OCR_PYTHON=/path/to/.venv-ocr-mlx/bin/python \
+  npm run dev:ingest:unlimited -- /path/to/document.pdf unlimited-ocr
+
+Then publish the reviewed package with npm run publish:ingest.
+EOF
+exit 1
