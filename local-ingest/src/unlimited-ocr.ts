@@ -58,7 +58,7 @@ function runInference(imageDir: string, outputDir: string): Promise<void> {
       }
       reject(
         new Error(
-          `Unlimited-OCR Mac exited with code ${code ?? 'unknown'}. Check the local model installation and MPS runtime.`,
+          `Unlimited-OCR MLX exited with code ${code ?? 'unknown'}. Check the local model installation and MLX runtime.`,
         ),
       );
     });
