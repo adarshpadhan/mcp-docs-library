@@ -20,6 +20,8 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
   AUTH_SESSION_SECRET: z.string().min(32).optional(),
+  OAUTH_SERVICE_URL: z.string().url().default('http://oauth:3001'),
+  OAUTH_INTERNAL_SECRET: z.string().min(16),
   LIBRARY_DATA_DIR: z.string().default('local-ingest/data/processed'),
   MCP_INCLUDE_PENDING: z.coerce.boolean().default(false),
   HTTPS_CERT_FILE: z.string().optional(),

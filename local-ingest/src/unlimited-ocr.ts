@@ -43,7 +43,14 @@ function runInference(imageDir: string, outputDir: string): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const childProcess = spawn(
       pythonBin,
-      [runScript, '--image_dir', imageDir, '--output_dir', outputDir],
+      [
+        runScript,
+        '--image_dir',
+        imageDir,
+        '--output_dir',
+        outputDir,
+        ...(process.env.OCR_FORCE_CPU === '1' ? ['--cpu'] : []),
+      ],
       { stdio: 'inherit' },
     );
 

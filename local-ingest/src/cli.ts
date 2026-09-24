@@ -37,6 +37,11 @@ if (mode === 'unlimited-ocr') {
 const bytes = await readFile(inputPath);
 const sourceSha256 = createHash('sha256').update(bytes).digest('hex');
 const documentId = crypto.randomUUID();
+const metadata = Object.fromEntries(
+  [mode, ...metadataArgs]
+    .filter((argument) => argument.includes('='))
+    .map((argument) => argument.split('=', 2)),
+);
 
 const manifest = ingestionManifestSchema.parse({
   documentId,
@@ -48,16 +53,16 @@ const manifest = ingestionManifestSchema.parse({
   processedAt: new Date().toISOString(),
   pages: [],
   metadata: {
-    title: basename(inputPath),
+    title: metadata.title ?? basename(inputPath),
     filename: basename(inputPath),
     mimeType: 'application/pdf',
-    documentType: 'pyq',
-    courseCode: 'UNKNOWN',
-    subject: 'Unknown',
-    semester: 'Unknown',
-    examYear: 'Unknown',
-    language: 'en',
-    contributor: 'Unknown',
+    documentType: metadata.documentType ?? 'other',
+    courseCode: metadata.courseCode ?? 'UNKNOWN',
+    subject: metadata.subject ?? 'Unknown',
+    semester: metadata.semester ?? 'Unknown',
+    examYear: metadata.examYear ?? 'Unknown',
+    language: metadata.language ?? 'en',
+    contributor: metadata.contributor ?? 'Unknown',
     rawLicense: {
       identifier: 'PENDING_REVIEW',
       name: 'License pending administrator review',

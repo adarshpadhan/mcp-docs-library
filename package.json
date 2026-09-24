@@ -9,7 +9,7 @@
     "backend",
     "packages/*",
     "local-ingest",
-    "cloudflare/*"
+    "frontend/*"
   ],
   "scripts": {
     "build": "tsc -b",
@@ -17,6 +17,7 @@
     "mcp:stdio": "tsx backend/src/stdio.ts",
     "dev:ingest": "tsx local-ingest/src/cli.ts",
     "dev:ingest:unlimited": "tsx local-ingest/src/cli.ts",
+    "publish:ingest": "tsx local-ingest/src/publish.ts",
     "typecheck": "tsc -b --pretty false",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

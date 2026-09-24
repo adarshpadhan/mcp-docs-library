@@ -13,8 +13,10 @@ services:
       REDIS_URL: redis://redis:6379
       LIBRARY_DATA_DIR: /app/library-data
       RAW_DATA_DIR: /app/raw-data
+      OAUTH_SERVICE_URL: http://oauth:3001
+      OAUTH_INTERNAL_SECRET: ${OAUTH_INTERNAL_SECRET}
       MCP_INCLUDE_PENDING: "true"
-      # Cloudflare terminates public TLS; keep the localhost origin HTTP.
+      # Caddy terminates public TLS; keep the backend private on the Docker network.
       HTTPS_CERT_FILE: ""
       HTTPS_KEY_FILE: ""
     ports:
@@ -31,6 +33,51 @@ services:
       - ../local-ingest/data/raw:/app/raw-data
       - ./certs:/app/certs:ro
 
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8787
+      OAUTH_URL: http://oauth:3001
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+      - oauth
+    restart: unless-stopped
+
+  oauth:
+    build:
+      context: ..
+      dockerfile: frontend/oauth/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      PORT: 3001
+      PUBLIC_BASE_URL: https://library.runloop.in
+      GOOGLE_OAUTH_REDIRECT_URI: https://library.runloop.in/auth/google/callback
+      DATABASE_URL: postgresql://library:library@postgres:5432/library
+      OAUTH_INTERNAL_SECRET: ${OAUTH_INTERNAL_SECRET}
+    expose:
+      - "3001"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:-library.runloop.in}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../frontend/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -42,6 +89,8 @@ services:
       - ../infra/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
       - ../infra/migrations/002_library_search.sql:/docker-entrypoint-initdb.d/002_library_search.sql:ro
       - ../infra/migrations/003_subject_short_name.sql:/docker-entrypoint-initdb.d/003_subject_short_name.sql:ro
+      - ../infra/migrations/004_users.sql:/docker-entrypoint-initdb.d/004_users.sql:ro
+      - ../infra/migrations/005_subscriptions.sql:/docker-entrypoint-initdb.d/005_subscriptions.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U library -d library"]
       interval: 5s
@@ -56,3 +105,5 @@ volumes:
   postgres-data:
     external: true
     name: oracle_postgres-data
+  caddy-data:
+  caddy-config:

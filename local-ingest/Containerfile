@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY local-ingest/requirements-unlimited-ocr.txt /app/requirements-unlimited-ocr.txt
+RUN pip install --no-cache-dir -r /app/requirements-unlimited-ocr.txt
+COPY local-ingest /app/local-ingest
+COPY packages /app/packages
+COPY package.json package-lock.json tsconfig.base.json /app/
+RUN npm ci
+ENV OCR_FORCE_CPU=1
+ENTRYPOINT ["npm", "run", "dev:ingest:unlimited", "--"]

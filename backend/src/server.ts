@@ -1,13 +1,6 @@
 import Fastify from 'fastify';
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import type { Archiver } from 'archiver';
 
 const require = createRequire(import.meta.url);
@@ -25,16 +18,19 @@ const archiver =
     }
     return new archiverModule.ZipArchive(options);
   });
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createServer as createHttpsServer } from 'node:https';
+import { join } from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { config } from '@college-library/config';
 import { createMcpServer } from './mcp.js';
 import { DatabaseLibrary } from './database-library.js';
+import { ingestionManifestSchema } from '@college-library/contracts';
 
 const app = Fastify({
   logger: true,
-  bodyLimit: 1_048_576,
+  bodyLimit: 25 * 1024 * 1024,
   serverFactory: (() => {
     if (!config.HTTPS_CERT_FILE || !config.HTTPS_KEY_FILE) return undefined;
     const httpsOptions = {
@@ -151,218 +147,28 @@ const signDownload = (documentIds: string[], expires: number) =>
     .update(`${documentIds.join(',')}.${expires}`)
     .digest('hex');
 const publicBaseUrl = config.PUBLIC_BASE_URL?.replace(/\/$/, '') ?? '';
-const oauthConfigured = Boolean(
-  config.GOOGLE_OAUTH_CLIENT_ID &&
-  config.GOOGLE_OAUTH_CLIENT_SECRET &&
-  config.GOOGLE_OAUTH_REDIRECT_URI &&
-  config.AUTH_SESSION_SECRET,
-);
-const oauthState = new Map<string, number>();
-type ClientMetadata = {
-  client_id: string;
-  client_name?: string;
-  redirect_uris: string[];
-  grant_types?: string[];
-  response_types?: string[];
-  token_endpoint_auth_method?: string;
+const oauthServiceUrl = config.OAUTH_SERVICE_URL.replace(/\/$/, '');
+const oauthIssuer = publicBaseUrl;
+const introspectToken = async (token: string) => {
+  const response = await fetch(`${oauthServiceUrl}/internal/introspect`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-internal-secret': config.OAUTH_INTERNAL_SECRET }, body: JSON.stringify({ token }), signal: AbortSignal.timeout(3000) });
+  if (!response.ok) return undefined;
+  const result = await response.json() as { active?: boolean; email?: string; subscription_status?: string };
+  return result.active ? result : undefined;
 };
-const clientMetadataCache = new Map<
-  string,
-  { metadata: ClientMetadata; expiresAt: number }
->();
-const isPrivateIp = (address: string) => {
-  const version = isIP(address);
-  if (version === 4) {
-    const [a, b] = address.split('.').map(Number);
-    return (
-      a === 10 ||
-      a === 127 ||
-      a === 0 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
-  }
-  return (
-    version === 6 &&
-    (address === '::1' ||
-      address === '::' ||
-      address.toLowerCase().startsWith('fc') ||
-      address.toLowerCase().startsWith('fd') ||
-      address.toLowerCase().startsWith('fe80:'))
-  );
-};
-const fetchClientMetadata = async (
-  clientId: string,
-): Promise<ClientMetadata | undefined> => {
-  if (!/^https:\/\//i.test(clientId)) return undefined;
-  const cached = clientMetadataCache.get(clientId);
-  if (cached && cached.expiresAt > Date.now()) return cached.metadata;
-  const url = new URL(clientId);
-  if (url.username || url.password || url.port) return undefined;
-  const addresses = isIP(url.hostname)
-    ? [url.hostname]
-    : (await lookup(url.hostname, { all: true })).map(({ address }) => address);
-  if (!addresses.length || addresses.some(isPrivateIp)) return undefined;
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(3000),
-    redirect: 'error',
-    headers: { accept: 'application/json' },
-  });
-  if (
-    !response.ok ||
-    Number(response.headers.get('content-length') ?? 0) > 65_536
-  )
-    return undefined;
-  const metadata = (await response.json()) as Partial<ClientMetadata>;
-  if (
-    metadata.client_id !== clientId ||
-    !Array.isArray(metadata.redirect_uris) ||
-    metadata.redirect_uris.length === 0 ||
-    metadata.redirect_uris.length > 20 ||
-    metadata.redirect_uris.some((uri) => typeof uri !== 'string')
-  )
-    return undefined;
-  const normalized: ClientMetadata = {
-    client_id: metadata.client_id,
-    client_name: metadata.client_name,
-    redirect_uris: metadata.redirect_uris,
-    grant_types: metadata.grant_types,
-    response_types: metadata.response_types,
-    token_endpoint_auth_method: metadata.token_endpoint_auth_method,
-  };
-  clientMetadataCache.set(clientId, {
-    metadata: normalized,
-    expiresAt: Date.now() + 5 * 60_000,
-  });
-  return normalized;
-};
-const isRedirectUriAllowed = (
-  requestedUri: string,
-  registeredUris: string[],
-) => {
-  if (registeredUris.includes(requestedUri)) return true;
-  try {
-    const requested = new URL(requestedUri);
-    if (
-      requested.protocol !== 'http:' ||
-      !['127.0.0.1', 'localhost'].includes(requested.hostname) ||
-      requested.username ||
-      requested.password ||
-      requested.search ||
-      requested.hash
-    )
-      return false;
-    return registeredUris.some((registeredUri) => {
-      const registered = new URL(registeredUri);
-      return (
-        registered.protocol === 'http:' &&
-        registered.hostname === requested.hostname &&
-        registered.pathname === requested.pathname &&
-        !registered.port
-      );
-    });
-  } catch {
-    return false;
-  }
-};
-const mcpOAuthRequests = new Map<
-  string,
-  {
-    clientId: string;
-    redirectUri: string;
-    state?: string;
-    codeChallenge: string;
-    expiresAt: number;
-  }
->();
-const mcpOAuthCodes = new Map<
-  string,
-  {
-    clientId: string;
-    redirectUri: string;
-    email: string;
-    codeChallenge: string;
-    expiresAt: number;
-  }
->();
-const mcpAccessTokens = new Map<
-  string,
-  { clientId: string; email: string; expiresAt: number }
->();
-const parseCookies = (header = '') =>
-  Object.fromEntries(
-    header
-      .split(';')
-      .map((part) => part.trim().split('=').map(decodeURIComponent))
-      .filter(([key, value]) => key && value),
-  );
-const sessionCookie = (value: string) =>
-  `library_session=${encodeURIComponent(value)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${config.NODE_ENV === 'production' ? '; Secure' : ''}`;
-const clearSessionCookie = `library_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${config.NODE_ENV === 'production' ? '; Secure' : ''}`;
-const signSession = (payload: string) =>
-  `${payload}.${createHmac('sha256', config.AUTH_SESSION_SECRET!).update(payload).digest('base64url')}`;
-const verifySession = (value?: string) => {
-  if (!value || !config.AUTH_SESSION_SECRET) return undefined;
-  const [payload, signature] = value.split('.');
-  const expected = payload
-    ? createHmac('sha256', config.AUTH_SESSION_SECRET)
-        .update(payload)
-        .digest('base64url')
-    : '';
-  if (
-    !signature ||
-    signature.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-  )
-    return undefined;
-  try {
-    const session = JSON.parse(
-      Buffer.from(payload, 'base64url').toString(),
-    ) as { email?: string; name?: string; exp?: number };
-    return session.exp && session.exp > Math.floor(Date.now() / 1000)
-      ? session
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-const adminBearerSession = (request: {
-  headers: { authorization?: string };
-}) => {
+const requireSession = async (request: { headers: { authorization?: string } }, reply: { header: (name: string, value: string) => unknown; code: (statusCode: number) => { send: (payload: object) => unknown } }) => {
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token || token.length !== config.ADMIN_INGEST_TOKEN.length)
-    return undefined;
-  if (
-    !timingSafeEqual(Buffer.from(token), Buffer.from(config.ADMIN_INGEST_TOKEN))
-  )
-    return undefined;
-  return { email: 'admin@college-library.local', name: 'MCP administrator' };
-};
-const requireSession = (
-  request: { headers: { authorization?: string; cookie?: string } },
-  reply: {
-    code: (statusCode: number) => { send: (payload: object) => unknown };
-  },
-) => {
-  const bearer = bearerSession(request);
-  if (bearer) return bearer;
-  const admin = adminBearerSession(request);
-  if (admin) return admin;
-  if (!oauthConfigured) {
-    if (config.NODE_ENV === 'production') {
-      reply.code(503).send({ error: 'google_oauth_not_configured' });
+  if (token) {
+    const session = await introspectToken(token);
+    if (session?.subscription_status !== 'active') {
+      reply.header('www-authenticate', 'Bearer error=\"insufficient_scope\"');
+      reply.code(403).send({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Active subscription required', data: { subscription_url: `${publicBaseUrl}/#subscription` } } });
       return undefined;
     }
-    return { email: 'development@localhost' };
+    if (session) return session;
   }
-  const session = verifySession(
-    parseCookies(request.headers.cookie).library_session,
-  );
-  if (!session) {
-    reply.code(401).send({ error: 'authentication_required' });
-    return undefined;
-  }
-  return session;
+  reply.header('www-authenticate', `Bearer realm=\"${oauthIssuer}/mcp\", authorization_uri=\"${oauthIssuer}/oauth/authorize\"`);
+  reply.code(401).send({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Authentication required' } });
+  return undefined;
 };
 const downloadUrl = (documentIds: string[]) => {
   const expires = Math.floor(Date.now() / 1000) + 600;
@@ -370,7 +176,6 @@ const downloadUrl = (documentIds: string[]) => {
   const path = `/api/v1/documents/download?documentIds=${encodeURIComponent(ids)}`;
   return `${publicBaseUrl}${path}&expires=${expires}&signature=${signDownload(documentIds, expires)}`;
 };
-const oauthIssuer = publicBaseUrl;
 const mcpSupportedVersions = [
   '2025-11-25',
   '2025-06-18',
@@ -403,271 +208,6 @@ const oauthMetadata = {
   token_endpoint_auth_methods_supported: ['none'],
   scopes_supported: ['openid', 'email', 'profile'],
 };
-const bearerSession = (request: {
-  headers: { authorization?: string; cookie?: string };
-}) => {
-  const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token) return undefined;
-  const session = mcpAccessTokens.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
-    if (session) mcpAccessTokens.delete(token);
-    return undefined;
-  }
-  return session;
-};
-
-app.get('/auth/google', async (_request, reply) => {
-  if (!oauthConfigured)
-    return reply.code(503).send({ error: 'google_oauth_not_configured' });
-  const state = randomBytes(32).toString('base64url');
-  oauthState.set(state, Date.now() + 10 * 60 * 1000);
-  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  url.searchParams.set('client_id', config.GOOGLE_OAUTH_CLIENT_ID!);
-  url.searchParams.set('redirect_uri', config.GOOGLE_OAUTH_REDIRECT_URI!);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'openid email profile');
-  url.searchParams.set('state', state);
-  url.searchParams.set('hd', config.COLLEGE_DOMAIN);
-  url.searchParams.set('prompt', 'select_account');
-  return reply.redirect(url.toString());
-});
-
-app.get<{ Querystring: { code?: string; state?: string; error?: string } }>(
-  '/auth/google/callback',
-  async (request, reply) => {
-    const { code, state, error } = request.query;
-    if (error) return reply.code(400).send({ error: 'google_oauth_denied' });
-    const expiresAt = state ? oauthState.get(state) : undefined;
-    const mcpRequest = state ? mcpOAuthRequests.get(state) : undefined;
-    oauthState.delete(state ?? '');
-    if (mcpRequest) mcpOAuthRequests.delete(state!);
-    if (!code || !state || !expiresAt || expiresAt < Date.now())
-      return reply.code(400).send({ error: 'invalid_oauth_state' });
-    if (!oauthConfigured)
-      return reply.code(503).send({ error: 'google_oauth_not_configured' });
-
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: config.GOOGLE_OAUTH_CLIENT_ID!,
-        client_secret: config.GOOGLE_OAUTH_CLIENT_SECRET!,
-        redirect_uri: config.GOOGLE_OAUTH_REDIRECT_URI!,
-        grant_type: 'authorization_code',
-      }),
-    });
-    if (!tokenResponse.ok)
-      return reply.code(401).send({ error: 'google_token_exchange_failed' });
-    const tokens = (await tokenResponse.json()) as { access_token?: string };
-    if (!tokens.access_token)
-      return reply.code(401).send({ error: 'google_access_token_missing' });
-    const profileResponse = await fetch(
-      'https://openidconnect.googleapis.com/v1/userinfo',
-      { headers: { authorization: `Bearer ${tokens.access_token}` } },
-    );
-    if (!profileResponse.ok)
-      return reply.code(401).send({ error: 'google_profile_fetch_failed' });
-    const profile = (await profileResponse.json()) as {
-      email?: string;
-      name?: string;
-      email_verified?: boolean;
-      hd?: string;
-    };
-    const emailDomain = profile.email?.split('@')[1]?.toLowerCase();
-    if (
-      !profile.email ||
-      !profile.email_verified ||
-      emailDomain !== config.COLLEGE_DOMAIN.toLowerCase() ||
-      (profile.hd &&
-        profile.hd.toLowerCase() !== config.COLLEGE_DOMAIN.toLowerCase())
-    ) {
-      return reply.code(403).send({ error: 'college_domain_required' });
-    }
-    if (mcpRequest) {
-      const authorizationCode = randomBytes(32).toString('base64url');
-      mcpOAuthCodes.set(authorizationCode, {
-        clientId: mcpRequest.clientId,
-        redirectUri: mcpRequest.redirectUri,
-        email: profile.email,
-        codeChallenge: mcpRequest.codeChallenge,
-        expiresAt: Date.now() + 60_000,
-      });
-      const redirect = new URL(mcpRequest.redirectUri);
-      redirect.searchParams.set('code', authorizationCode);
-      if (mcpRequest.state)
-        redirect.searchParams.set('state', mcpRequest.state);
-      // RFC 9207: identify the authorization server in every authorization response.
-      redirect.searchParams.set('iss', oauthIssuer);
-      return reply.redirect(redirect.toString());
-    }
-    const payload = Buffer.from(
-      JSON.stringify({
-        email: profile.email,
-        name: profile.name,
-        exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
-      }),
-    ).toString('base64url');
-    return reply
-      .header('set-cookie', sessionCookie(signSession(payload)))
-      .redirect('/');
-  },
-);
-
-app.get('/.well-known/oauth-authorization-server', async (_request, reply) => {
-  if (!oauthConfigured)
-    return reply.code(503).send({ error: 'google_oauth_not_configured' });
-  return oauthMetadata;
-});
-
-const protectedResourceMetadata = {
-  resource: `${oauthIssuer}/mcp`,
-  authorization_servers: [oauthIssuer],
-  scopes_supported: ['openid', 'email', 'profile'],
-};
-app.get(
-  '/.well-known/oauth-protected-resource',
-  async () => protectedResourceMetadata,
-);
-app.get(
-  '/.well-known/oauth-protected-resource/mcp',
-  async () => protectedResourceMetadata,
-);
-
-app.get<{ Querystring: Record<string, string | undefined> }>(
-  '/oauth/authorize',
-  async (request, reply) => {
-    if (!oauthConfigured)
-      return reply.code(503).send({ error: 'google_oauth_not_configured' });
-    const {
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: responseType,
-      state,
-      code_challenge: codeChallenge,
-    } = request.query;
-    if (
-      !clientId ||
-      responseType !== 'code' ||
-      !redirectUri ||
-      !/^https?:\/\//.test(redirectUri) ||
-      !codeChallenge
-    ) {
-      return reply.code(400).send({ error: 'invalid_authorization_request' });
-    }
-    let clientMetadata: ClientMetadata | undefined;
-    try {
-      clientMetadata = await fetchClientMetadata(clientId);
-    } catch {
-      return reply.code(400).send({ error: 'invalid_client' });
-    }
-    if (
-      clientId.startsWith('https://') &&
-      (!clientMetadata ||
-        !isRedirectUriAllowed(redirectUri, clientMetadata.redirect_uris))
-    ) {
-      return reply.code(400).send({ error: 'invalid_client' });
-    }
-    const oauthStateValue = randomBytes(32).toString('base64url');
-    mcpOAuthRequests.set(oauthStateValue, {
-      clientId,
-      redirectUri,
-      state,
-      codeChallenge,
-      expiresAt: Date.now() + 10 * 60_000,
-    });
-    oauthState.set(oauthStateValue, Date.now() + 10 * 60_000);
-    const googleUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    googleUrl.searchParams.set('client_id', config.GOOGLE_OAUTH_CLIENT_ID!);
-    googleUrl.searchParams.set(
-      'redirect_uri',
-      config.GOOGLE_OAUTH_REDIRECT_URI!,
-    );
-    googleUrl.searchParams.set('response_type', 'code');
-    googleUrl.searchParams.set('scope', 'openid email profile');
-    googleUrl.searchParams.set('state', oauthStateValue);
-    googleUrl.searchParams.set('hd', config.COLLEGE_DOMAIN);
-    googleUrl.searchParams.set('prompt', 'select_account');
-    return reply.redirect(googleUrl.toString());
-  },
-);
-
-app.post<{ Body: Record<string, unknown> }>(
-  '/oauth/token',
-  async (request, reply) => {
-    const body = request.body ?? {};
-    const code = typeof body.code === 'string' ? body.code : '';
-    const clientId = typeof body.client_id === 'string' ? body.client_id : '';
-    const redirectUri =
-      typeof body.redirect_uri === 'string' ? body.redirect_uri : '';
-    const codeVerifier =
-      typeof body.code_verifier === 'string' ? body.code_verifier : '';
-    let clientMetadata: ClientMetadata | undefined;
-    if (clientId.startsWith('https://')) {
-      try {
-        clientMetadata = await fetchClientMetadata(clientId);
-      } catch {
-        return reply.code(400).send({ error: 'invalid_client' });
-      }
-    }
-    const authorization = mcpOAuthCodes.get(code);
-    if (
-      clientMetadata &&
-      !isRedirectUriAllowed(redirectUri, clientMetadata.redirect_uris)
-    ) {
-      return reply.code(400).send({ error: 'invalid_client' });
-    }
-    const codeChallenge = createHash('sha256')
-      .update(codeVerifier)
-      .digest('base64url');
-    if (
-      !authorization ||
-      authorization.expiresAt <= Date.now() ||
-      authorization.clientId !== clientId ||
-      authorization.redirectUri !== redirectUri ||
-      authorization.codeChallenge !== codeChallenge
-    ) {
-      return reply.code(400).send({ error: 'invalid_grant' });
-    }
-    mcpOAuthCodes.delete(code);
-    const expiresAt = Date.now() + 3600_000;
-    const accessToken = randomBytes(32).toString('base64url');
-    mcpAccessTokens.set(accessToken, {
-      clientId,
-      email: authorization.email,
-      expiresAt,
-    });
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: 3600,
-      scope: 'openid email profile',
-    };
-  },
-);
-
-app.post<{ Body: { client_name?: string; redirect_uris?: string[] } }>(
-  '/oauth/register',
-  async (request) => ({
-    client_id: `mcp-${randomBytes(16).toString('hex')}`,
-    client_name: request.body?.client_name ?? 'MCP client',
-    redirect_uris: request.body?.redirect_uris ?? [],
-    token_endpoint_auth_method: 'none',
-  }),
-);
-
-app.get('/auth/me', async (request, reply) => {
-  const session = verifySession(
-    parseCookies(request.headers.cookie).library_session,
-  );
-  if (!session) return reply.code(401).send({ error: 'unauthorized' });
-  return session;
-});
-
-app.post('/auth/logout', async (_request, reply) =>
-  reply.header('set-cookie', clearSessionCookie).send({ ok: true }),
-);
-
 app.get('/', async () => ({
   service: config.MCP_SERVER_NAME,
   login: '/auth/google',
@@ -690,9 +230,35 @@ app.post('/api/v1/ingestion/manifests', async (request, reply) => {
   if (token !== config.ADMIN_INGEST_TOKEN) {
     return reply.code(401).send({ error: 'unauthorized' });
   }
-  return reply
-    .code(501)
-    .send({ error: 'manifest_persistence_not_implemented' });
+
+  const parsed = ingestionManifestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: 'invalid_manifest', details: parsed.error.issues });
+  }
+
+  const manifest = parsed.data;
+  const documentDir = join(config.LIBRARY_DATA_DIR, manifest.documentId);
+  const stagingDir = join(config.LIBRARY_DATA_DIR, `.staging-${manifest.documentId}-${Date.now()}`);
+  try {
+    await mkdir(stagingDir, { recursive: true });
+    await writeFile(join(stagingDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\\n`, 'utf8');
+    await Promise.all(
+      manifest.pages.map((page) =>
+        writeFile(join(stagingDir, `page-${String(page.pageNumber).padStart(4, '0')}.md`), page.text, 'utf8'),
+      ),
+    );
+    await rename(stagingDir, documentDir).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error;
+      await rm(documentDir, { recursive: true, force: true });
+      await rename(stagingDir, documentDir);
+    });
+    await library.syncFiles();
+    return reply.code(201).send({ documentId: manifest.documentId, synced: true });
+  } catch (error) {
+    await rm(stagingDir, { recursive: true, force: true });
+    request.log.error(error, 'Failed to persist ingestion manifest');
+    return reply.code(500).send({ error: 'manifest_persistence_failed' });
+  }
 });
 
 app.get<{
@@ -826,7 +392,7 @@ app.all('/mcp', async (request, reply) => {
       result: mcpDiscovery,
     });
   }
-  if (!requireSession(request, reply)) return;
+  if (!(await requireSession(request, reply))) return;
   const sessionId = request.headers['mcp-session-id'];
   let transport =
     typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;

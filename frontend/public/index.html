@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>College Library</title>
+    <style>
+      :root { color-scheme: light; }
+      body { font: 16px system-ui, sans-serif; max-width: 760px; margin: 10vh auto; padding: 0 24px; color: #172033; }
+      .card { border: 1px solid #dce3ef; border-radius: 14px; padding: 28px; box-shadow: 0 8px 30px #17203312; }
+      .muted { color: #5e6b82; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+      a, button { background: #1769e0; color: white; border: 0; border-radius: 7px; padding: 12px 18px; text-decoration: none; cursor: pointer; font: inherit; }
+      button.secondary, a.secondary { background: #eef3fb; color: #1769e0; }
+      #account { min-height: 24px; color: #1769e0; }
+      #logout, #account-panel { display: none; }
+      #account-panel { margin-top: 24px; padding-top: 20px; border-top: 1px solid #dce3ef; }
+      .danger { background: #c62828; }
+      code { background: #f1f4f8; padding: 2px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>College Library</h1>
+      <p class="muted">Search verified college learning resources through an MCP-compatible client.</p>
+      <p id="account" aria-live="polite">Checking your session…</p>
+      <div class="actions">
+        <a id="login" href="/auth/google">Sign in with Google</a>
+        <button id="logout" class="secondary" type="button">Sign out</button>
+      </div>
+      <p class="muted">After signing in, connect your MCP client to <code>https://library.runloop.in/mcp</code> to search the library.</p>
+      <section id="account-panel" aria-labelledby="account-heading">
+        <h2 id="account-heading">Account</h2>
+        <p id="account-details"></p>
+        <button id="delete-account" class="danger" type="button">Permanently delete account</button>
+        <h3 id="subscription">Subscription</h3>
+        <p id="subscription-status">Checking subscription…</p>
+      </section>
+    </main>
+    <script>
+      const account = document.getElementById('account');
+      const login = document.getElementById('login');
+      const logout = document.getElementById('logout');
+      const accountPanel = document.getElementById('account-panel');
+      const accountDetails = document.getElementById('account-details');
+      const deleteAccount = document.getElementById('delete-account');
+      const subscriptionStatus = document.getElementById('subscription-status');
+      fetch('/auth/me', { credentials: 'same-origin' })
+        .then((response) => response.ok ? response.json() : null)
+        .then((user) => {
+          if (user && user.email) {
+            account.textContent = `Signed in as ${user.email}`;
+            accountDetails.textContent = user.name ? `${user.name} · ${user.email}` : user.email;
+            accountPanel.style.display = 'block';
+            fetch('/api/subscription', { credentials: 'same-origin' }).then((response) => response.json()).then((subscription) => { subscriptionStatus.textContent = `Status: ${subscription.status}${subscription.current_period_end ? ` · renews ${subscription.current_period_end}` : ''}`; });
+            login.style.display = 'none';
+            logout.style.display = 'inline-block';
+          } else {
+            account.textContent = 'Sign in with your college Google account to continue.';
+          }
+        })
+        .catch(() => { account.textContent = 'Sign in with your college Google account to continue.'; });
+      logout.addEventListener('click', async () => {
+        await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        window.location.reload();
+      });
+      deleteAccount.addEventListener('click', async () => {
+        if (!window.confirm('Permanently delete your account? This cannot be undone.')) return;
+        const response = await fetch('/auth/account', { method: 'DELETE', credentials: 'same-origin' });
+        if (response.ok) window.location.reload();
+        else accountDetails.textContent = 'Account deletion failed. Please try again.';
+      });
+    </script>
+  </body>
+</html>

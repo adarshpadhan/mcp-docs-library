@@ -13,7 +13,7 @@
 
 ## Overview
 
-MCP Docs Library is an open-source college learning platform with a TypeScript API, MCP server, PostgreSQL/pgvector search, Cloudflare delivery, and a local OCR ingestion worker. It is designed for licensed or permissioned course content and student access through compatible AI clients.
+MCP Docs Library is an open-source college learning platform with a TypeScript API, MCP server, PostgreSQL/pgvector search, self-hosted frontend, and a local OCR ingestion worker. It is designed for licensed or permissioned course content and student access through compatible AI clients.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ Available tools include `search_library`, `semantic_search`, `get_document_text`
 
 ## Deployment directories
 
-- [`cloudflare/`](./cloudflare/) — student portal, Workers/Pages, and R2.
+- [`frontend/`](./frontend/) — self-hosted frontend, Google OAuth, and Caddy HTTPS.
   The portal documentation includes the backend ingestion and storage paths.
 - [`backend/`](./backend/) — backend deployment bundle containing the API/MCP server, PostgreSQL/pgvector, Redis, and
   indexing on the Oracle Ampere VM.
@@ -64,7 +64,7 @@ The root is the workspace control layer shared by all three deployments:
 - `infra/` contains database migrations shared by the Oracle deployment.
 - `README.md` and `progress.md` document the project and implementation status.
 
-The application-specific source is now separated under `cloudflare/`,
+The application-specific source is now separated under `frontend/`,
 `backend/`, and `local-ingest/`. These root files should not be removed unless
 the project is split into separate repositories.
 
@@ -85,7 +85,7 @@ the project is split into separate repositories.
   admin bearer token as a secondary direct-auth option. Keep that token private;
   local development keeps OAuth optional when its credentials are absent.
 - Direct PDF downloads at `GET /api/v1/documents/:documentId/file`; administrators may use the bearer token, while MCP clients should call `create_document_download_link` with either one `documentId` or 1–20 `documentIds` to receive a 10-minute signed HTTPS ZIP URL
-- Stable public hostname: `https://library.runloop.in` through the named Cloudflare Tunnel configuration in [`cloudflare/`](./cloudflare/).
+- Stable public hostname: `https://library.runloop.in` through Caddy on the Oracle server; deployment details are in [`frontend/`](./frontend/).
 - Runnable stdio MCP entrypoint via `npm run mcp:stdio`.
 - Versioned upload-job and OCR-manifest contracts.
 - Local-ingest CLI that validates a page-preserving manifest shape and computes
@@ -116,6 +116,14 @@ Apply the first database migration after starting PostgreSQL with:
 ```sh
 psql "$DATABASE_URL" -f infra/migrations/001_initial.sql
 ```
+
+Documents are organized with the controlled `documentType` values `book`, `notes`, `pyq`, `course-content`, and `other`. Ingestion metadata can override the default category, for example:
+
+```sh
+npm run dev:ingest -- /path/to/notes.pdf contract documentType=notes courseCode=CS101 subject="Data Structures"
+```
+
+The category is stored in PostgreSQL as `documents.document_type` and is available as a search filter through the MCP API.
 
 To run the Oracle backend stack:
 
@@ -177,26 +185,25 @@ certificate verification for local testing. Do not use this certificate for
 the public Oracle deployment; terminate HTTPS with a real domain certificate
 at a reverse proxy.
 
-### Temporary Gemini development access
+### Public Oracle access
 
-The local server is not reachable by Gemini's hosted app through
-`127.0.0.1`. To create a temporary public HTTPS URL, start the backend first,
-then run:
-
-```sh
-$HOME/.local/bin/cloudflared tunnel \
-  --url https://127.0.0.1:8787 \
-  --no-tls-verify
-```
-
-Cloudflare prints a temporary URL such as
-`https://random-name.trycloudflare.com`. Add `/mcp` to that URL in Gemini:
+The Oracle deployment uses the self-hosted frontend and Caddy HTTPS stack
+described in [`frontend/README.md`](./frontend/README.md). It serves the MCP
+endpoint at:
 
 ```text
-https://random-name.trycloudflare.com/mcp
+https://library.runloop.in/mcp
 ```
 
-### Development storage locations
+### Local ingestion transport
+
+The admin ingestion endpoint is `POST /api/v1/ingestion/manifests` with a
+validated `IngestionManifest` JSON body and `Authorization: Bearer
+$ADMIN_INGEST_TOKEN`. It stores page-preserving output under `LIBRARY_DATA_DIR`
+and synchronizes PostgreSQL indexes. See `local-ingest/README.md` for the
+CLI publisher and Apple Container workflow.
+
+## Development storage locations
 
 The project and its large local assets are stored here:
 
@@ -206,7 +213,7 @@ The project and its large local assets are stored here:
 - Generated manifests and page Markdown:
   `local-ingest/data/processed/` (small; generated and ignored by Git)
 - Node dependencies: `node_modules/` (about 84 MB)
-- Cloudflare tunnel binary: `/Users/adarsh/.local/bin/cloudflared`
+- Caddy manages the public Let's Encrypt certificate in its Docker volume.
 
 When Podman Desktop is installed, it stores its Linux VM outside the repository:
 

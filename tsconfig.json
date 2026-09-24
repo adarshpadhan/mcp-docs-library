@@ -4,6 +4,7 @@
     { "path": "./backend/tsconfig.json" },
     { "path": "./packages/config/tsconfig.json" },
     { "path": "./packages/contracts/tsconfig.json" },
-    { "path": "./local-ingest/tsconfig.json" }
+    { "path": "./frontend/tsconfig.json" },
+    { "path": "./frontend/oauth/tsconfig.json" }
   ]
 }

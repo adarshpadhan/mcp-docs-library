@@ -39,6 +39,25 @@ preserves the source checksum, and writes a page-preserving ingestion package un
 `local-ingest/data/processed/<documentId>/` containing `manifest.json` and one
 Markdown file per page. It does not overwrite the original file.
 
+## Publishing to the backend
+
+After reviewing a generated package, publish it over the authenticated ingestion
+transport:
+
+```sh
+ADMIN_INGEST_TOKEN="$ADMIN_INGEST_TOKEN" npm run publish:ingest -- \
+  local-ingest/data/processed/<documentId> https://library.example
+```
+
+The backend validates the manifest, atomically stores `manifest.json` and page
+Markdown under `LIBRARY_DATA_DIR`, then runs `syncFiles` so PostgreSQL full-text
+and pgvector indexes are refreshed. Set `OCR_FORCE_CPU=1` when running in an
+Apple container; the adapter otherwise selects MPS when available and always
+falls back to CPU.
+
+`Containerfile` and `container-publish.sh` provide a CPU-safe Apple Container
+workflow that runs the existing local-ingest CLI and publishes its newest output.
+
 Metadata fields currently include title, document type, course code, subject,
 semester, exam year, language, contributor, raw/processed license, attribution,
 source URL, rights notes, and license status. New output is

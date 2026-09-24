@@ -20,6 +20,18 @@ export class DatabaseLibrary {
     this.pool = new Pool({ connectionString: databaseUrl });
   }
 
+  async upsertUser(user: { email: string; name?: string; googleSub?: string }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO users (email, name, google_sub) VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, google_sub=EXCLUDED.google_sub, updated_at=now()`,
+      [user.email, user.name ?? null, user.googleSub ?? null],
+    );
+  }
+
+  async deleteUser(email: string): Promise<void> {
+    await this.pool.query('DELETE FROM users WHERE email=$1', [email]);
+  }
+
   async syncFiles(): Promise<void> {
     const entries = await readdir(this.processedDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
@@ -59,16 +71,36 @@ export class DatabaseLibrary {
           await this.pool.query(`DELETE FROM chunks WHERE document_id=$1 AND page_start=$2`, [
             manifest.documentId, page.pageNumber,
           ]);
-          await this.pool.query(
-            `INSERT INTO chunks (document_id,page_start,page_end,content) VALUES ($1,$2,$2,$3)`,
+          const chunk = await this.pool.query<{ id: number }>(
+            `INSERT INTO chunks (document_id,page_start,page_end,content)
+             VALUES ($1,$2,$2,$3) RETURNING id`,
             [manifest.documentId, page.pageNumber, page.text],
           );
+          await this.upsertEmbedding(chunk.rows[0].id, page.text);
         }
       } catch (error) {
         console.error(`Skipping ingestion package ${entry.name}:`, error);
         // Ignore incomplete ingestion packages; the local worker may still be writing them.
       }
     }
+  }
+
+  private async upsertEmbedding(chunkId: number, text: string): Promise<void> {
+    if (!this.embeddingApiUrl || !this.embeddingApiKey) return;
+    const response = await fetch(this.embeddingApiUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.embeddingApiKey}` },
+      body: JSON.stringify({ model: this.embeddingModel, input: text }),
+    });
+    if (!response.ok) throw new Error(`Embedding provider returned HTTP ${response.status}`);
+    const payload = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
+    const embedding = payload.data?.[0]?.embedding;
+    if (!embedding) throw new Error('Embedding provider returned no embedding');
+    await this.pool.query(
+      `INSERT INTO chunk_embeddings (chunk_id, model, embedding) VALUES ($1,$2,$3::vector)
+       ON CONFLICT (chunk_id) DO UPDATE SET model=EXCLUDED.model, embedding=EXCLUDED.embedding, created_at=now()`,
+      [chunkId, this.embeddingModel, `[${embedding.join(',')}]`],
+    );
   }
 
   async search(query: string, courseCode: string | undefined, documentType: string | undefined, limit: number) {
